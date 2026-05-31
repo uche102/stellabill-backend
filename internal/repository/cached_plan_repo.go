@@ -33,7 +33,7 @@ type CachedPlanRepo struct {
 	misses        uint64
 	stales        uint64
 	invalidatedAt sync.Map
-	inflight      sync.Map
+	inflight      sync.Map // map[string]*inflightLoad
 	sf            singleflight.Group
 }
 
@@ -115,17 +115,6 @@ func (cpr *CachedPlanRepo) FindByID(ctx context.Context, id string) (*PlanRow, e
 	if err != nil {
 		return nil, err
 	}
-
-	if cpr.cache != nil {
-		prBytes, err := json.Marshal(pr)
-		if err == nil {
-			env := cacheEnvelope{Data: prBytes, StoredAt: time.Now()}
-			if envBytes, err := json.Marshal(env); err == nil {
-				_ = cpr.cache.Set(ctx, key, envBytes, cpr.ttl)
-			}
-		}
-	}
-
 	return pr, nil
 }
 
@@ -157,10 +146,11 @@ func (cpr *CachedPlanRepo) List(ctx context.Context) ([]*PlanRow, error) {
 				} else {
 					return nil, fmt.Errorf("corrupted cache envelope: %w", err)
 				}
+				return nil, fmt.Errorf("corrupted cache data: %w", err)
 			}
 		}
 	}
-	
+
 	// Cache miss, use singleflight for list
 	atomic.AddUint64(&cpr.misses, 1)
 	v, err, _ := cpr.sf.Do(key, func() (interface{}, error) {
