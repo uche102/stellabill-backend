@@ -138,7 +138,7 @@ func (cpr *CachedPlanRepo) List(ctx context.Context) ([]*PlanRow, error) {
 				_ = cpr.cache.Delete(ctx, key)
 			} else {
 				var out []*PlanRow
-				if err := json.Unmarshal(env.Data, &out); err == nil {
+				if unmarshalErr := json.Unmarshal(env.Data, &out); unmarshalErr == nil {
 					atomic.AddUint64(&cpr.hits, 1)
 					return out, nil
 				} else {
@@ -183,12 +183,11 @@ func (cpr *CachedPlanRepo) List(ctx context.Context) ([]*PlanRow, error) {
 	if err != nil {
 		return nil, err
 	}
-
 	if cpr.cache != nil {
-		outBytes, err := json.Marshal(out)
-		if err == nil {
+		outBytes, marshalErr := json.Marshal(out)
+		if marshalErr == nil {
 			env := cacheEnvelope{Data: outBytes, StoredAt: time.Now()}
-			if envBytes, err := json.Marshal(env); err == nil {
+			if envBytes, marshalErr := json.Marshal(env); marshalErr == nil {
 				_ = cpr.cache.Set(ctx, key, envBytes, cpr.ttl)
 			}
 		}
