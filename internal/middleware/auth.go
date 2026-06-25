@@ -6,9 +6,10 @@ import (
 	"strings"
 	"time"
 
+	"stellarbill-backend/internal/auth"
+
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
-	"stellarbill-backend/internal/auth"
 )
 
 var jwksCache *auth.JWKSCache
@@ -16,7 +17,7 @@ var jwksCache *auth.JWKSCache
 // InitJWKSCache initializes the JWKS cache with the given URL and TTL (seconds).
 func InitJWKSCache(jwksURL string, ttlSeconds int) {
 	if jwksURL != "" {
-		jwksCache = auth.NewJWKSCache(jwksURL, time.Duration(ttlSeconds)*time.Second)
+		jwksCache = auth.NewJWKSCache(jwksURL, time.Duration(ttl)*time.Second)
 	}
 }
 
@@ -153,7 +154,7 @@ func AuthMiddleware(jwksURL interface{}, ttl string) gin.HandlerFunc {
 		c.Set(auth.RolesContextKey, roles)
 		c.Set("callerID", sub)
 		c.Set("tenantID", tenantID)
-		
+
 		c.Next()
 	}
 }

@@ -9,17 +9,17 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
-	"stellarbill-backend/internal/logger"
+	loggerpkg "stellarbill-backend/internal/logger"
 	"stellarbill-backend/internal/middleware"
 )
 
 func TestLoggerOutputsJSON(t *testing.T) {
 
 	var buf bytes.Buffer
-	logger.Log.SetOutput(&buf)
-	logger.Log.SetFormatter(&logrus.JSONFormatter{})
+	loggerpkg.Log.SetOutput(&buf)
+	loggerpkg.Log.SetFormatter(&logrus.JSONFormatter{})
 
-	logger.Log.Info("test message")
+	loggerpkg.Log.Info("test message")
 
 	var result map[string]interface{}
 	err := json.Unmarshal(buf.Bytes(), &result)
@@ -84,8 +84,8 @@ func TestLoggerNeverLeaksSecrets(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			var buf bytes.Buffer
-			logger.Log.SetOutput(&buf)
-			logger.Log.SetFormatter(logger.NewLogSchemaFormatter(false))
+			loggerpkg.Log.SetOutput(&buf)
+			loggerpkg.Log.SetFormatter(loggerpkg.NewLogSchemaFormatter(false))
 
 			r := gin.New()
 			r.Use(middleware.RequestLogger())

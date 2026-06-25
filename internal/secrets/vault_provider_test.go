@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"errors"
 )
 
 func TestVaultProvider_GetSecret(t *testing.T) {
@@ -81,7 +82,6 @@ func TestVaultProvider_GetSecret(t *testing.T) {
 
 		p := NewVaultProvider(server.URL, "bad-token", "secret/data")
 		_, err := p.GetSecret(context.Background(), "KEY")
-
 		if err == nil || !containsError(err, ErrSecretNotFound) {
 			t.Errorf("expected ErrSecretNotFound for 403, got %v", err)
 		}

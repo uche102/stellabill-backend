@@ -86,12 +86,16 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 	var routerDB db.DBTX
 
 	if cfg.DBConn != "" {
-		connectCtx, cancel := context.WithTimeout(
-			context.Background(),
-			time.Duration(cfg.DBPoolConnectTimeout)*time.Second,
-		)
-		dbPool, err = db.NewPool(connectCtx, cfg)
-		cancel()
+		poolConfig, err := pgxpool.ParseConfig(cfg.DBConn)
+		if err != nil {
+			fmt.Printf("Failed to parse database pool config: %v\n", err)
+		} else {
+			applyPGXPoolConfig(poolConfig, cfg)
+			dbPool, err = pgxpool.NewWithConfig(context.Background(), poolConfig)
+			if err != nil {
+				fmt.Printf("Failed to initialize database pool: %v\n", err)
+			}
+		}
 
 		planDB, err = sql.Open("postgres", cfg.DBConn)
 		if err != nil {
@@ -316,12 +320,9 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 		}
 
 		return nil
-	}
-}
-
-		// Feature flags endpoints
-		admin.GET("/feature-flags", auth.RequirePermission(auth.PermManageSubscriptions), featureFlagsHandler.GetFeatureFlags)
-		admin.PATCH("/feature-flags", auth.RequirePermission(auth.PermManageSubscriptions), idemMiddleware, featureFlagsHandler.ToggleFeatureFlag)
+	// Feature flags endpoints
+	admin.GET("/feature-flags", auth.RequirePermission(auth.PermManageSubscriptions), featureFlagsHandler.GetFeatureFlags)
+	admin.PATCH("/feature-flags", auth.RequirePermission(auth.PermManageSubscriptions), idemMiddleware, featureFlagsHandler.ToggleFeatureFlag)
 	}
 
 	return func(ctx context.Context) error {
