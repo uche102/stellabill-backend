@@ -1,11 +1,15 @@
 package routes
 
 import (
+	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"stellarbill-backend/internal/auth"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
@@ -14,12 +18,25 @@ import (
 )
 
 // helper to reset env between tests
+
+func getAuthToken() string {
+	token, _ := createToken("Test1!JwtSecret-MixedAlphaNumeric@123", "user123", []auth.Role{auth.RoleUser}, time.Now().Add(time.Hour))
+	return "Bearer " + token
+}
+
 func resetRateLimitEnv() {
 	os.Unsetenv("RATE_LIMIT_ENABLED")
 	os.Unsetenv("RATE_LIMIT_RPS")
 	os.Unsetenv("RATE_LIMIT_BURST")
 	os.Unsetenv("RATE_LIMIT_MODE")
 	os.Unsetenv("RATE_LIMIT_WHITELIST")
+}
+
+
+func newAuthRequest(method, path string) *http.Request {
+	req := httptest.NewRequest(method, path, nil)
+	req.Header.Set("Authorization", getAuthToken())
+	return req
 }
 
 func setupRouter() *gin.Engine {
@@ -30,7 +47,31 @@ func setupRouter() *gin.Engine {
 	os.Setenv("ENV", "development")
 	os.Setenv("TRACING_EXPORTER", "none")
 
+	os.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/db")
+	os.Setenv("MOCK_DB", "true")
+	os.Setenv("JWT_SECRET", "Test1!JwtSecret-MixedAlphaNumeric@123")
+	os.Setenv("ADMIN_TOKEN", "Admin1!Token-MixedAlphaNumeric@123")
+
 	r := gin.New()
+
+	// Pre-populate callerID in the Gin context for rate limiting tests
+	r.Use(func(c *gin.Context) {
+		if cid := c.GetHeader("X-Caller-ID"); cid != "" {
+			c.Set("callerID", cid)
+		} else if authHeader := c.GetHeader("Authorization"); strings.HasPrefix(authHeader, "Bearer ") {
+			tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
+			token, _, err := new(jwt.Parser).ParseUnverified(tokenStr, jwt.MapClaims{})
+			if err == nil {
+				if claims, ok := token.Claims.(jwt.MapClaims); ok {
+					if sub, err := claims.GetSubject(); err == nil && sub != "" {
+						c.Set("callerID", sub)
+					}
+				}
+			}
+		}
+		c.Next()
+	})
+
 	Register(r)
 	return r
 }
@@ -92,6 +133,7 @@ func TestRouter_BurstLimit_IsHonored(t *testing.T) {
 	r := setupRouter()
 
 	path := "/api/v1/subscriptions"
+	token := makeRatelimitJWT(t, "user-1", []auth.Role{auth.RoleUser})
 
 	// first 2 requests should pass (burst = 2)
 	for i := 0; i < 2; i++ {
@@ -113,6 +155,9 @@ func TestRouter_RateLimit_Disabled(t *testing.T) {
 
 	r := setupRouter()
 
+	path := "/api/v1/subscriptions"
+	token := makeRatelimitJWT(t, "user-1", []auth.Role{auth.RoleUser})
+
 	for i := 0; i < 30; i++ {
 		w := serveAuthorizedRateLimit(r, "GET", "/api/v1/subscriptions", "2.2.2.2:1234", "rate-user")
 		assert.NotEqual(t, 429, w.Code)
@@ -131,6 +176,7 @@ func TestRouter_RateLimit_Modes(t *testing.T) {
 		r := setupRouter()
 
 		path := "/api/v1/subscriptions"
+		token := makeRatelimitJWT(t, "user-1", []auth.Role{auth.RoleUser})
 
 		// IP1 exhausts
 		w1 := serveAuthorizedRateLimit(r, "GET", path, "10.0.0.1:1111", "ip-user")
@@ -172,6 +218,9 @@ func TestRouter_RateLimit_Modes(t *testing.T) {
 
 		path := "/api/v1/subscriptions"
 
+		// user1 token
+		token1 := makeRatelimitJWT(t, "user1", []auth.Role{auth.RoleUser})
+
 		// same user different IP should be separate bucket
 		serveAuthorizedRateLimit(r, "GET", path, "10.0.0.1:1111", "hybrid-user")
 		w2 := serveAuthorizedRateLimit(r, "GET", path, "10.0.0.2:1111", "hybrid-user")
@@ -189,6 +238,7 @@ func TestRouter_SustainedLoad_Behavior(t *testing.T) {
 	r := setupRouter()
 
 	path := "/api/v1/subscriptions"
+	token := makeRatelimitJWT(t, "user-1", []auth.Role{auth.RoleUser})
 
 	success := 0
 	limited := 0
@@ -211,6 +261,8 @@ func TestRouter_SustainedLoad_Behavior(t *testing.T) {
 				success++
 			} else if w.Code == 429 {
 				limited++
+			} else {
+				t.Logf("Unexpected status %d: %s", w.Code, w.Body.String())
 			}
 		}(i)
 	}

@@ -15,7 +15,6 @@ import (
 	"stellarbill-backend/internal/handlers"
 	"stellarbill-backend/internal/metrics"
 	"stellarbill-backend/internal/middleware"
-	"stellarbill-backend/internal/outbox"
 	"stellarbill-backend/internal/reconciliation"
 	"stellarbill-backend/internal/repository"
 	"stellarbill-backend/internal/service"
@@ -82,6 +81,21 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 		if err != nil {
 			fmt.Printf("Failed to initialize plan database handle: %v\n", err)
 		}
+
+		if cfg.DBReplicaConn != "" {
+			replicaDB, err = sql.Open("postgres", cfg.DBReplicaConn)
+			if err != nil {
+				fmt.Printf("Failed to initialize replica database handle: %v\n", err)
+			} else {
+				repository.ApplySQLDBPoolConfig(replicaDB, cfg)
+			}
+		}
+
+		if replicaDB != nil {
+			routerDB = db.NewReadRouter(planDB, replicaDB)
+		} else {
+			routerDB = planDB
+		}
 	}
 
 	var stopMetrics chan struct{}
@@ -131,9 +145,9 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 
 	rawPlanRepo := repository.NewMockPlanRepo()
 	rawSubRepo := repository.NewMockSubscriptionRepo(
-		&repository.SubscriptionRow{ID: "sub-123", TenantID: "", CustomerID: "c1", Status: "active", PlanID: "p1"},
-		&repository.SubscriptionRow{ID: "sub-456", TenantID: "", CustomerID: "c2", Status: "active", PlanID: "p1"},
-		&repository.SubscriptionRow{ID: "test123", TenantID: "", CustomerID: "c3", Status: "active", PlanID: "p1"},
+		&repository.SubscriptionRow{ID: "sub-123", TenantID: "", CustomerID: "c1", Status: "active", PlanID: "p1", Amount: "10.00", Interval: "monthly"},
+		&repository.SubscriptionRow{ID: "sub-456", TenantID: "", CustomerID: "c2", Status: "active", PlanID: "p1", Amount: "20.50", Interval: "yearly"},
+		&repository.SubscriptionRow{ID: "test123", TenantID: "", CustomerID: "c3", Status: "active", PlanID: "p1", Amount: "15.00", Interval: "monthly"},
 	)
 
 	cachedPlanRepo := repository.NewCachedPlanRepo(rawPlanRepo, planCache, repoCacheTTL)
@@ -261,6 +275,12 @@ func RegisterWithCleanup(r *gin.Engine) func(context.Context) error {
 		if planDB != nil {
 			log.Printf("closing plan database handle")
 			planDB.Close()
+		}
+		if replicaDB != nil {
+			log.Printf("closing replica database handle")
+			if err := replicaDB.Close(); err != nil {
+				return fmt.Errorf("close replica database handle: %w", err)
+			}
 		}
 		if tracerShutdown != nil {
 			log.Printf("flushing tracer")

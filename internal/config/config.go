@@ -50,9 +50,11 @@ func (e *ConfigError) Error() string {
 type Config struct {
 	Env       string
 	Port      int
-	DBConn    string
-	JWTSecret string
-	JWKSURL   string
+	DBConn        string
+	DBReplicaConn string
+	JWTSecret     string
+	JWKSURL                string
+	SecurityFrameAncestors string
 	// Add additional secure defaults for optional configs
 	MaxHeaderBytes      int
 	MaxRequestSize      int64
@@ -123,6 +125,8 @@ const (
 	DefaultReadTimeout  = 30      // seconds
 	DefaultWriteTimeout = 30      // seconds
 	DefaultIdleTimeout  = 120     // seconds
+	DefaultSecurityFrameAncestors = "'none'"
+	DefaultSecurityCSPReportURI = "/csp-report"
 
 	// DB pool defaults — chosen to be safe for a typical single-instance
 	// Postgres with max_connections=100.  Tune upward for larger deployments.
@@ -200,6 +204,7 @@ var secretKeys = []string{
 	"DATABASE_URL",
 	"JWT_SECRET",
 	"ADMIN_TOKEN",
+	"DATABASE_REPLICA_URL",
 }
 
 // Load loads configuration from environment variables with validation.
@@ -217,6 +222,7 @@ func Load(opts ...Option) (Config, error) {
 		Env:                 getEnv("ENV", "development"),
 		Port:                DefaultPort,
 		DBConn:              "",
+		DBReplicaConn:       "",
 		JWTSecret:           "",
 		JWKSURL:             getEnv("JWKS_URL", ""),
 		MaxHeaderBytes:      MaxHeaderBytes,
@@ -290,6 +296,9 @@ func (c *Config) validate(resolvedSecrets map[string]string, secretErrs map[stri
 	// Validate required secrets are present via the provider
 	for _, key := range secretKeys {
 		if err, failed := secretErrs[key]; failed {
+			if key == "DATABASE_REPLICA_URL" && errors.Is(err, secrets.ErrSecretNotFound) {
+				continue // optional
+			}
 			if errors.Is(err, secrets.ErrSecretNotFound) {
 				result.Errors = append(result.Errors, ConfigError{
 					Type:    ErrMissingEnvVar,
@@ -341,6 +350,24 @@ func (c *Config) validate(resolvedSecrets map[string]string, secretErrs map[stri
 			})
 		} else {
 			c.DBConn = dbURL
+		}
+	}
+
+	// Validate DATABASE_REPLICA_URL format if present, else fallback to DATABASE_URL
+	replicaURL, ok := resolvedSecrets["DATABASE_REPLICA_URL"]
+	if !ok || replicaURL == "" {
+		replicaURL = c.DBConn
+	}
+	if replicaURL != "" {
+		if !isValidDatabaseURL(replicaURL) {
+			result.Errors = append(result.Errors, ConfigError{
+				Type:    ErrInvalidURL,
+				Key:     "DATABASE_REPLICA_URL",
+				Message: "must be a valid database connection string",
+				Value:   maskPassword(replicaURL),
+			})
+		} else {
+			c.DBReplicaConn = replicaURL
 		}
 	}
 
@@ -579,6 +606,37 @@ func (c *Config) validate(resolvedSecrets map[string]string, secretErrs map[stri
 			Key:     "ALLOWED_ORIGINS",
 			Message: err.Error(),
 			Value:   allowedOrigins,
+		})
+	}
+
+	// Validate optional security settings
+	if sf := os.Getenv("SECURITY_FRAME_ANCESTORS"); sf != "" {
+		c.SecurityFrameAncestors = sf
+	}
+	if c.SecurityFrameAncestors == "" {
+		c.SecurityFrameAncestors = DefaultSecurityFrameAncestors
+	}
+	if strings.ContainsAny(c.SecurityFrameAncestors, ";\n\r") {
+		result.Errors = append(result.Errors, ConfigError{
+			Type:    ErrInvalidValue,
+			Key:     "SECURITY_FRAME_ANCESTORS",
+			Message: "must not contain control characters or semicolons",
+			Value:   c.SecurityFrameAncestors,
+		})
+	}
+
+	if uri := os.Getenv("SECURITY_CSP_REPORT_URI"); uri != "" {
+		c.SecurityCSPReportURI = uri
+	}
+	if c.SecurityCSPReportURI == "" {
+		c.SecurityCSPReportURI = DefaultSecurityCSPReportURI
+	}
+	if !strings.HasPrefix(c.SecurityCSPReportURI, "/") {
+		result.Errors = append(result.Errors, ConfigError{
+			Type:    ErrInvalidValue,
+			Key:     "SECURITY_CSP_REPORT_URI",
+			Message: "must be an absolute path starting with '/'",
+			Value:   c.SecurityCSPReportURI,
 		})
 	}
 

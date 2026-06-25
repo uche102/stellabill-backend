@@ -3,11 +3,8 @@ package logger_test
 import (
 	"bytes"
 	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"testing"
 
-	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
 	"stellarbill-backend/internal/logger"
 	"stellarbill-backend/internal/middleware"
