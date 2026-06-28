@@ -118,9 +118,14 @@ func Register(r *gin.Engine) {
 		apiProtected.GET("/statements/:id", handlers.NewGetStatementHandler(stmtSvc))
 		apiProtected.GET("/statements", handlers.NewListStatementsHandler(stmtSvc))
 	}
-
+	
+// Webhook receiver — signature verified by WebhookVerification middleware
+	webhookSecret := os.Getenv("WEBHOOK_SECRET")
+	webhookHandler := handlers.NewWebhookHandler()
+	r.POST("/webhooks", middleware.WebhookVerification(webhookSecret), webhookHandler.Receive)
 	admin := api.Group("/admin")
 	admin.Use(authMiddleware)
+	
 	{
 		admin.POST("/purge", adminHandler.PurgeCache)
 		// Diagnostics endpoint — re-runs startup checks for live triage
